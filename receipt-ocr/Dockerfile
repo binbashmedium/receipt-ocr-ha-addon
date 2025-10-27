@@ -1,32 +1,20 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:latest
-FROM $BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19
+FROM ${BUILD_FROM}
 
-# Arbeitsverzeichnis
+# Labels
+LABEL maintainer="yourname@example.com"
+LABEL description="PaddleOCR Add-on for Home Assistant"
+
+# Systempakete
+RUN apk add --no-cache python3 py3-pip py3-yaml py3-opencv
+
+# Python-Dependencies
+RUN pip install --no-cache-dir paddleocr==2.7.0.3 flask==3.0.3 Pillow
+
+# App kopieren
 WORKDIR /app
+COPY app /app
 
-# Systemabhängigkeiten installieren
-RUN apk update && apk upgrade
-RUN apk add python3 py3-pip
-RUN apk add git
-
-# LibreTranslate klonen
-RUN git clone --depth 1 https://github.com/LibreTranslate/LibreTranslate.git /app
-
-# Virtuelle Umgebung
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-
-# Pip aktualisieren
-RUN pip install --upgrade pip
-
-RUN echo "Contents of /app:" && ls -al /app
-
-#RUN pip install -r requirements.txt
-
-
-# Übersetzungen kompilieren
-#RUN python scripts/compile_locales.py
-
-# Copy root filesystem
-COPY rootfs /
+# Port & Start
+EXPOSE 5000
+CMD ["python3", "server.py"]
