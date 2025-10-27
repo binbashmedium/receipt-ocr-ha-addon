@@ -28,7 +28,7 @@ WORKDIR /opt
 RUN python3 -m venv venv
 
 # Abhängigkeiten in venv installieren (um PEP 668 zu umgehen)
-RUN /opt/venv/bin/pip install --no-cache-dir paddleocr==2.7.0.3 flask==3.0.3 Pillow pyyaml
+RUN /opt/venv/bin/pip install --no-cache-dir paddleocr flask Pillow pyyaml
 
 # App kopieren
 WORKDIR /app
