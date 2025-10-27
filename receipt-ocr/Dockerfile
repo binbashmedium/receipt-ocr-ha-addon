@@ -5,6 +5,22 @@ LABEL maintainer="you@example.com"
 
 # Systempakete
 RUN apk add --no-cache python3 py3-pip py3-yaml py3-opencv py3-virtualenv
+RUN apk add --no-cache \
+    build-base \
+    gcc \
+    g++ \
+    python3-dev \
+    jpeg-dev \
+    zlib-dev \
+    openblas-dev \
+    meson \
+    ninja \
+    pkgconfig \
+    python3 \ 
+    py3-pip \
+    py3-yaml \
+    py3-opencv \
+    py3-virtualenv
 
 WORKDIR /opt
 
