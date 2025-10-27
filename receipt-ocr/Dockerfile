@@ -3,6 +3,7 @@ FROM ${BUILD_FROM}
 
 LABEL maintainer="you@example.com"
 
+RUN apk add --no-cache gcompat libstdc++
 # Systempakete
 RUN apk add --no-cache python3 py3-pip py3-yaml py3-opencv py3-virtualenv
 RUN apk add --no-cache \
