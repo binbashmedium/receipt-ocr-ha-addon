@@ -1,0 +1,28 @@
+name: LibreTranslate
+version: "0.0.1"
+slug: libretranslate
+description: Selbstgehosteter LibreTranslate-Server für Home Assistant, komplett offline.
+startup: services
+boot: auto
+ingress: true
+panel_icon: mdi:translate
+panel_title: LibreTranslate
+ports:
+  5000/tcp: 5000
+map:
+  - share
+build: .
+options:
+  host: "0.0.0.0"
+  port: 5000
+  languages: "en,es,de,fr,it,zh"
+  debug: false
+schema:
+  host: str?
+  port: port?
+  languages: str?
+  debug: bool?
+arch:
+  - amd64
+init: false
+
