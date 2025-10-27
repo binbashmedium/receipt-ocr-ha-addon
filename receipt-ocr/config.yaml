@@ -15,4 +15,3 @@ map:
   - share:rw
   - media:rw
 webui: "http://[HOST]:[PORT:5000]"
-image: "local/paddleocr-addon-{arch}"
