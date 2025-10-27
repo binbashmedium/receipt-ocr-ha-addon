@@ -23,7 +23,8 @@ RUN apk add --no-cache \
     py3-pip \
     py3-yaml \
     py3-opencv \
-    py3-virtualenv
+    py3-virtualenv \
+    py3-setuptools
 
 WORKDIR /opt
 
