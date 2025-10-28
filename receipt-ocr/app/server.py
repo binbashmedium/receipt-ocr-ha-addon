@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from paddleocr import PaddleOCR
-import yaml, os, datetime, traceback, logging, json, re, threading
+import os, datetime, traceback, logging, json, re, threading
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -8,12 +8,14 @@ CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 logging.basicConfig(level=logging.INFO)
 
 app.logger.info("Initialisiere PaddleOCR (de)...")
+
 ocr = PaddleOCR(
     use_doc_orientation_classify=False,
     use_doc_unwarping=False,
     use_textline_orientation=False,
     lang='de'
 )
+
 app.logger.info("PaddleOCR bereit.")
 
 RESULT_JSON = "/share/ocr/results.json"
@@ -50,28 +52,29 @@ def process_ocr(image_path, image_name):
         for res in result:
             if isinstance(res, dict) and "rec_texts" in res:
                 texts.extend([t.strip() for t in res["rec_texts"] if t.strip()])
-                # --- PATCH: Preisfragmente zusammenfügen ---
-                merged_texts = []
-                frag = []
-                for t in texts:
-                    tt = t.strip()
-                    # Fragmente wie 1 , 37
-                    if re.fullmatch(r"[\d.,]+", tt):
-                       frag.append(tt)
-                       continue
-                    if frag:
-                       joined = "".join(frag)
-                       if re.fullmatch(r"\d+[.,]\d{2}", joined):
-                          merged_texts.append(joined)
-                       else:
-                          merged_texts.extend(frag)
-                    frag = []
-                    merged_texts.append(tt)
-                 if frag:
-                    joined = "".join(frag)
-                    merged_texts.append(joined if re.fullmatch(r"\d+[.,]\d{2}", joined) else " ".join(frag))
-                texts = merged_texts
 
+        # --- PATCH: Preisfragmente zusammenfügen ---
+        merged_texts = []
+        frag = []
+        for t in texts:
+            tt = t.strip()
+            # Fragmente wie "1", ",", "37"
+            if re.fullmatch(r"[\d.,]+", tt):
+                frag.append(tt)
+                continue
+            if frag:
+                joined = "".join(frag)
+                if re.fullmatch(r"\d+[.,]\d{2}", joined):
+                    merged_texts.append(joined)
+                else:
+                    merged_texts.extend(frag)
+                frag = []
+            merged_texts.append(tt)
+        if frag:
+            joined = "".join(frag)
+            merged_texts.append(joined if re.fullmatch(r"\d+[.,]\d{2}", joined) else " ".join(frag))
+
+        texts = merged_texts
 
         with open(os.path.join(DEBUG_DIR, "debug_last_ocr.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(texts))
@@ -153,8 +156,7 @@ def parse_receipt(lines):
             name_part = t[:m.start()].strip(" .-")
             if any(w in name_part.lower() for w in skip_words):
                 continue
-            if not name_part and last_name and \
-                    not any(w in last_name.lower() for w in skip_words):
+            if not name_part and last_name and not any(w in last_name.lower() for w in skip_words):
                 name_part = last_name
 
             qty = 1.0
@@ -203,8 +205,7 @@ def parse_receipt(lines):
                 total = float(m.group(1).replace(",", "."))
                 break
 
-    items = [it for it in items if not any(
-        kw in it["name"].lower() for kw in skip_words)]
+    items = [it for it in items if not any(kw in it["name"].lower() for kw in skip_words)]
 
     return {"store": store, "total": total, "items": items}
 
@@ -247,3 +248,4 @@ def after_request(response):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+    
