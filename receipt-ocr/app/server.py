@@ -12,9 +12,8 @@ app.logger.info("Initialisiere PaddleOCR (de)...")
 ocr = PaddleOCR(
     use_doc_orientation_classify=False,
     use_doc_unwarping=False,
-    use_textline_orientation=False,
+    use_textline_orientation=True,
     lang='de',
-    use_textline_orientation=True,   # wichtig!
     text_det_unclip_ratio=2.2
 )
 
