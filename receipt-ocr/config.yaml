@@ -1,5 +1,5 @@
 name: "Receipt OCR Add-on"
-version: "1.0.3"
+version: "1.0.4"
 slug: "receipt_ocr_addon"
 description: "Lokaler OCR-Service, der Bilder verarbeitet und Ergebnisse in /share/ocr/result.yaml speichert."
 arch:
