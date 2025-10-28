@@ -10,6 +10,8 @@ Ermöglicht das lesen von Kassenzettel.
 4. Integration anpassen:
    url = "http://localhost:5000/ocr"
 ## Beispiel Card:
+
+```
 class FileUploadCard extends HTMLElement {
   setConfig(config) {
     this.config = config;
@@ -83,3 +85,4 @@ class FileUploadCard extends HTMLElement {
 }
 
 customElements.define("file-upload-card", FileUploadCard);
+```
