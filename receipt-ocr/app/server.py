@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify
 from paddleocr import PaddleOCR
 import yaml, os, datetime, traceback, logging, json, re
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 logging.basicConfig(level=logging.INFO)
 
 # --- OCR Initialisierung ---
@@ -216,6 +218,13 @@ def index():
         "result_file": RESULT_JSON,
         "debug_dir": DEBUG_DIR
     })
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 
 if __name__ == '__main__':
