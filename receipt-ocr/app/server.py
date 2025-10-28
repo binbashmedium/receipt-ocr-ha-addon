@@ -50,6 +50,28 @@ def process_ocr(image_path, image_name):
         for res in result:
             if isinstance(res, dict) and "rec_texts" in res:
                 texts.extend([t.strip() for t in res["rec_texts"] if t.strip()])
+                # --- PATCH: Preisfragmente zusammenfügen ---
+                merged_texts = []
+                frag = []
+                for t in texts:
+                    tt = t.strip()
+                    # Fragmente wie 1 , 37
+                    if re.fullmatch(r"[\d.,]+", tt):
+                       frag.append(tt)
+                       continue
+                    if frag:
+                       joined = "".join(frag)
+                       if re.fullmatch(r"\d+[.,]\d{2}", joined):
+                          merged_texts.append(joined)
+                       else:
+                          merged_texts.extend(frag)
+                    frag = []
+                    merged_texts.append(tt)
+                 if frag:
+                    joined = "".join(frag)
+                    merged_texts.append(joined if re.fullmatch(r"\d+[.,]\d{2}", joined) else " ".join(frag))
+                texts = merged_texts
+
 
         with open(os.path.join(DEBUG_DIR, "debug_last_ocr.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(texts))
