@@ -15,8 +15,8 @@ ocr = PaddleOCR(
 )
 app.logger.info("PaddleOCR bereit.")
 
-RESULT_JSON = "results.json"
-DEBUG_DIR = "debug_outputs"
+RESULT_JSON = "/share/ocr/results.json"
+DEBUG_DIR = "/share/ocr/debug_outputs"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 # Liste bekannter Supermärkte in Deutschland
