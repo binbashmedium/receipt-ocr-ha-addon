@@ -12,7 +12,9 @@ ocr = PaddleOCR(
     use_doc_orientation_classify=False,
     use_doc_unwarping=False,
     use_textline_orientation=False,
-    lang='de'
+    lang='de',
+    det_db_box_thresh=0.3,
+    det_db_unclip_ratio=1.8
 )
 app.logger.info("PaddleOCR bereit.")
 
