@@ -18,7 +18,9 @@ app.logger.info("PaddleOCR bereit.")
 
 RESULT_JSON = "/share/ocr/results.json"
 DEBUG_DIR = "/share/ocr/debug_outputs"
+MEDIA_PATH = "/media/ocr"
 os.makedirs(DEBUG_DIR, exist_ok=True)
+os.makedirs(MEDIA_PATH, exist_ok=True)
 
 KNOWN_SUPERMARKETS = [
     "EDEKA", "REWE", "ALDI", "NETTO", "PENNY", "LIDL",
@@ -33,8 +35,8 @@ def process_ocr(image_path, image_name):
         result = ocr.predict(image_path)
         for idx, res in enumerate(result):
             base_name = os.path.splitext(image_name)[0]
-            json_out = os.path.join(DEBUG_DIR, f"{base_name}_res")
-            img_out = os.path.join(DEBUG_DIR, f"{base_name}_res")
+            json_out = os.path.join(MEDIA_PATH, f"{base_name}_res")
+            img_out = os.path.join(MEDIA_PATH, f"{base_name}_res")
 
             if hasattr(res, "save_to_json"):
                 res.save_to_json(json_out)
