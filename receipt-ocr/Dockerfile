@@ -8,9 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN python -m pip install -U pip setuptools wheel
 
-# Install PaddleOCR and dependencies
+
 RUN pip install paddleocr paddlepaddle \
-    opencv-python-headless pillow pyyaml flask flask-cors
+    opencv-python-headless pillow pyyaml flask flask-cors \
+    easyocr doctr[torch] torch torchvision torchaudio \
+    transformers keras-ocr
+    
 
 WORKDIR /app
 COPY app /app
