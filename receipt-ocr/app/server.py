@@ -81,7 +81,7 @@ def process_ocr(image_path, image_name, engine_name):
             f.write("\n".join(texts))
 
         # Parsing durchführen
-        parsed = parse_receipt_new(texts)
+        parsed = parse_receipt(texts)
         entry = {
             "timestamp": datetime.datetime.now().isoformat(timespec='seconds'),
             "file": image_name,
