@@ -19,12 +19,9 @@ ocr_engines = {
 DEFAULT_ENGINE = "doctr"
 
 
-app.logger.info("Initialisiere PaddleOCR (de)...")
-app.logger.info("PaddleOCR bereit.")
-
-RESULT_JSON = "results.json"
-DEBUG_DIR = "debug_outputs"
-MEDIA_PATH = "ocr"
+RESULT_JSON = "/share/ocr/results.json"
+DEBUG_DIR = "/share/ocr/debug_outputs"
+MEDIA_PATH = "/media/ocr"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 os.makedirs(MEDIA_PATH, exist_ok=True)
 
