@@ -16,7 +16,7 @@ ocr_engines = {
     "easyocr": None,
     "doctr": None
 }
-DEFAULT_ENGINE = "paddle"
+DEFAULT_ENGINE = "doctr"
 
 
 app.logger.info("Initialisiere PaddleOCR (de)...")
