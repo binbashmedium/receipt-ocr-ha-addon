@@ -73,9 +73,9 @@ def parse_receipt_new(lines):
     lines = [t.strip() for t in lines if t.strip()]
     app.logger.info(f"[DEBUG] parse_receipt(): {len(lines)} Zeilen")
 
-    # --- Marktname erkennen ---
+    # --- Marktname finden ---
     store = ""
-    for i, t in enumerate(lines[:10]):
+    for t in lines[:10]:
         for market in KNOWN_SUPERMARKETS:
             if market.lower() in t.lower():
                 store = market
@@ -83,68 +83,103 @@ def parse_receipt_new(lines):
         if store:
             break
 
-    # --- Regexe für Preise und Mengen ---
-    price_re = re.compile(r"(\d+[.,]\d{2})\s?(?:€|eur|b|a)?$", re.IGNORECASE)
-    qty_re = re.compile(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)?", re.IGNORECASE)
+    # --- Vorverarbeitung ---
+    merged_lines = []
+    skip_tokens = {"eur", "€", "visa", "mastercard", "uid", "nr", "geg.", "x", "summe"}
+    # Mergen von "zerhackten" Zahlen (z. B. ["38,6", "67"] → "38,67")
+    i = 0
+    while i < len(lines):
+        t = lines[i]
+        if i < len(lines) - 1 and re.match(r"^\d+,\d$", t) and re.match(r"^\d+$", lines[i + 1]):
+            merged_lines.append(t + lines[i + 1])
+            i += 2
+        else:
+            merged_lines.append(t)
+            i += 1
+    lines = merged_lines
 
+    price_re = re.compile(r"(\d+[.,]\d{2})(?!\d)")
     items = []
     buffer_name = ""
-    last_price = None
+    last_item = None
 
-    # --- Zeilenbasiertes Parsing ---
-    for t in lines:
-        t_clean = t.replace("€", "").strip()
-        # Preis am Ende erkennen
-        m_price = price_re.search(t_clean)
+    def clean_name(s):
+        s = s.replace("  ", " ").strip(" .,-")
+        # Entferne A/B am Anfang oder Ende
+        s = re.sub(r"^[AB]\b|\b[AB]$", "", s).strip()
+        return s
 
+    for idx, t in enumerate(lines):
+        # Kandidaten für Preis
+        m_price = price_re.search(t)
         if m_price:
             price = float(m_price.group(1).replace(",", "."))
-            name_part = t_clean[:m_price.start()].strip(" .-")
+            name_part = t[:m_price.start()].strip()
 
-            # evtl. vorherige Zeilen (z. B. BANANE / BANDEROLE) kombinieren
-            if buffer_name:
-                name_part = (buffer_name + " " + name_part).strip()
+            # Wenn nur Steuerkennung oder leer → kombiniere vorherige Zeilen
+            if not name_part or name_part.lower() in {"a", "b"}:
+                name_part = buffer_name
                 buffer_name = ""
 
-            # Menge suchen (z. B. 1,064 kg)
-            qty_match = re.search(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)", name_part.lower())
+            name_part = clean_name(name_part)
+
+            # Menge extrahieren (z. B. „1,064 kg“ oder „2 Stk“)
             qty = 1.0
-            if qty_match:
+            m_qty = re.search(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)?", name_part.lower())
+            if m_qty:
                 try:
-                    qty = float(qty_match.group(1).replace(",", "."))
+                    qty = float(m_qty.group(1).replace(",", "."))
                 except:
                     pass
-                # Entferne Menge aus dem Namen
+                # Entferne Menge aus Name
                 name_part = re.sub(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)", "", name_part, flags=re.IGNORECASE).strip()
+
+            # Falls kein Name → evtl. vorherige Zeilen
+            if not name_part and buffer_name:
+                name_part = buffer_name
+                buffer_name = ""
 
             if len(name_part) > 1:
                 items.append({"qty": qty, "name": name_part, "price": price})
-            last_price = price
+                last_item = items[-1]
+            else:
+                buffer_name = ""
 
         else:
-            # Zeile ohne Preis: evtl. Produktfortsetzung
-            if any(x in t.lower() for x in ["summe", "gesamt", "visa", "mastercard"]):
+            # Mögliche Mengenzeile nach Produkt (z. B. "1,064 kg X 1,29 EUR/kg")
+            if last_item and re.search(r"\d+[.,]?\d*\s*(kg|stk|stück|x)", t.lower()):
+                m_qty = re.search(r"(\d+[.,]?\d*)", t)
+                if m_qty:
+                    try:
+                        last_item["qty"] = float(m_qty.group(1).replace(",", "."))
+                    except:
+                        pass
                 continue
-            # Buffer aufbauen, bis Preis folgt
+
+            # Zeile ignorieren, wenn sie offensichtlich kein Produkt ist
+            if any(tok in t.lower() for tok in skip_tokens):
+                continue
+
+            # Produktname puffern
             buffer_name = (buffer_name + " " + t).strip()
 
-    # --- Gesamtsumme suchen ---
+    # --- Gesamtbetrag ---
     total = None
     for t in lines:
-        if any(x in t.lower() for x in ["summe", "gesamt", "total", "betrag"]):
-            m = price_re.search(t)
+        if any(x in t.lower() for x in ["summe", "gesamt", "betrag"]):
+            m = price_re.findall(t)
             if m:
-                total = float(m.group(1).replace(",", "."))
+                total = float(m[-1].replace(",", "."))
                 break
+    # Falls nicht gefunden, letzte Preis-Zahl nehmen
     if total is None:
-        # letzte Zahl als Fallback
         for t in reversed(lines):
-            m = price_re.search(t)
+            m = price_re.findall(t)
             if m:
-                total = float(m.group(1).replace(",", "."))
+                total = float(m[-1].replace(",", "."))
                 break
 
-    # --- Rausfiltern von offensichtlichen Nicht-Artikeln ---
+    # Filter
     skip_words = {"summe", "eur", "gesamt", "visa", "karte", "bon", "betrag", "wechselgeld"}
     items = [it for it in items if not any(sw in it["name"].lower() for sw in skip_words)]
 
@@ -153,7 +188,8 @@ def parse_receipt_new(lines):
         "total": total,
         "items": items,
         "lines": lines
-    }
+                }
+    
     
 def process_ocr(image_path, image_name, engine_name):
     try:
