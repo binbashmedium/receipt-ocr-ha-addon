@@ -2,10 +2,25 @@ from flask import Flask, request, jsonify
 from paddleocr import PaddleOCR
 import os, datetime, traceback, logging, json, re, threading
 from flask_cors import CORS
+from paddleocr import PaddleOCR
+import easyocr
+import doctr.models as doctr_models
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+import keras_ocr
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 logging.basicConfig(level=logging.INFO)
+
+ocr_engines = {
+    "paddle": None,
+    "easyocr": None,
+    "doctr": None,
+    "trocr": None,
+    "kerasocr": None
+}
+DEFAULT_ENGINE = "paddle"
+
 
 app.logger.info("Initialisiere PaddleOCR (de)...")
 
@@ -13,9 +28,7 @@ ocr = PaddleOCR(
     use_doc_orientation_classify=False,
     use_doc_unwarping=False,
     use_textline_orientation=True,
-    lang='de',
-    text_det_unclip_ratio=2.2
-)
+    lang='de')
 
 app.logger.info("PaddleOCR bereit.")
 
@@ -32,61 +45,86 @@ KNOWN_SUPERMARKETS = [
     "TEGUT", "FAMILA"
 ]
 
+def get_ocr_texts(engine_name, image_path):
+    from PIL import Image
 
-def process_ocr(image_path, image_name):
-    try:
-        result = ocr.predict(image_path)
-        for idx, res in enumerate(result):
-            base_name = os.path.splitext(image_name)[0]
-            json_out = os.path.join(MEDIA_PATH, f"{base_name}_res")
-            img_out = os.path.join(MEDIA_PATH, f"{base_name}_res")
-
-            if hasattr(res, "save_to_json"):
-                res.save_to_json(json_out)
-            elif isinstance(res, dict):
-                with open(json_out, "w", encoding="utf-8") as f:
-                    json.dump(res, f, ensure_ascii=False, indent=2)
-            if hasattr(res, "save_to_img"):
-                res.save_to_img(img_out)
-
-        texts = []
+    global ocr_engines
+    engine_name = engine_name.lower()
+    texts = []
+    if engine_name == "paddle":
+        global ocr_engines
+        if ocr_engines["paddle"] is None:
+            ocr_engines["paddle"] = PaddleOCR(use_doc_orientation_classify=False,
+                                              use_doc_unwarping=False,
+                                              use_textline_orientation=True,
+                                              lang='de')
+        result = ocr_engines["paddle"].predict(image_path)
         for res in result:
             if isinstance(res, dict) and "rec_texts" in res:
                 texts.extend([t.strip() for t in res["rec_texts"] if t.strip()])
+        return texts
 
-        # --- PATCH: Preisfragmente zusammenfügen ---
-        merged_texts = []
-        frag = []
-        for t in texts:
-            tt = t.strip()
-            # Fragmente wie "1", ",", "37"
-            if re.fullmatch(r"[\d.,]+", tt):
-                frag.append(tt)
-                continue
-            if frag:
-                joined = "".join(frag)
-                if re.fullmatch(r"\d+[.,]\d{2}", joined):
-                    merged_texts.append(joined)
-                else:
-                    merged_texts.extend(frag)
-                frag = []
-            merged_texts.append(tt)
-        if frag:
-            joined = "".join(frag)
-            merged_texts.append(joined if re.fullmatch(r"\d+[.,]\d{2}", joined) else " ".join(frag))
+    elif engine_name == "easyocr":
+        if ocr_engines["easyocr"] is None:
+            ocr_engines["easyocr"] = easyocr.Reader(['de'])
+        result = ocr_engines["easyocr"].readtext(image_path)
+        texts = [r[1] for r in result]
+        return texts
 
-        texts = merged_texts
+    elif engine_name == "doctr":
+        if ocr_engines["doctr"] is None:
+            ocr_engines["doctr"] = doctr_models.ocr_predictor(
+                det_arch='db_resnet50',
+                reco_arch='crnn_vgg16_bn',
+                pretrained=True
+            )
+        img = Image.open(image_path).convert("RGB")
+        result = ocr_engines["doctr"].predict(img)
+        return [word.value for block in result.pages[0].blocks for line in block.lines for word in line.words]
 
-        with open(os.path.join(DEBUG_DIR, "debug_last_ocr.txt"), "w", encoding="utf-8") as f:
+    elif engine_name == "trocr":
+        if ocr_engines["trocr"] is None:
+            processor = TrOCRProcessor.from_pretrained("microsoft/trocr-base-handwritten")
+            model = VisionEncoderDecoderModel.from_pretrained("microsoft/trocr-base-handwritten")
+            ocr_engines["trocr"] = (processor, model)
+        processor, model = ocr_engines["trocr"]
+        from PIL import Image
+        image = Image.open(image_path).convert("RGB")
+        pixel_values = processor(images=image, return_tensors="pt").pixel_values
+        generated_ids = model.generate(pixel_values)
+        text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        return [text]
+
+    elif engine_name == "kerasocr":
+        if ocr_engines["kerasocr"] is None:
+            ocr_engines["kerasocr"] = keras_ocr.pipeline.Pipeline()
+        prediction_groups = ocr_engines["kerasocr"].recognize([image_path])
+        return [text for text, box in prediction_groups[0]]
+
+    else:
+        raise ValueError(f"Unbekannte OCR-Engine: {engine_name}")
+
+
+def process_ocr(image_path, image_name, engine_name):
+    try:
+        app.logger.info(f"OCR-Prozess gestartet für {image_name} mit Engine: {engine_name}")
+
+        texts = get_ocr_texts(engine_name, image_path)
+
+        # Debug-Ausgabe speichern
+        with open(os.path.join(DEBUG_DIR, f"debug_last_ocr_{engine_name}.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(texts))
 
+        # Parsing durchführen
         parsed = parse_receipt(texts)
         entry = {
             "timestamp": datetime.datetime.now().isoformat(timespec='seconds'),
             "file": image_name,
+            "engine": engine_name,
             **parsed
         }
 
+        # Ergebnisse zusammenführen
         data = []
         if os.path.exists(RESULT_JSON):
             try:
@@ -100,11 +138,12 @@ def process_ocr(image_path, image_name):
         with open(RESULT_JSON, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-        app.logger.info(f"OCR abgeschlossen für {image_name}")
+        app.logger.info(f"OCR abgeschlossen für {image_name} (Engine: {engine_name})")
 
     except Exception as e:
-        app.logger.error(f"OCR-Fehler ({image_name}): {e}")
+        app.logger.error(f"OCR-Fehler ({image_name}, Engine {engine_name}): {e}")
         app.logger.debug(traceback.format_exc())
+
 
 
 @app.route('/ocr', methods=['POST'])
@@ -112,16 +151,20 @@ def run_ocr():
     if 'file' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
+    engine_name = request.args.get("engine", DEFAULT_ENGINE).lower()
+    if engine_name not in ocr_engines:
+        return jsonify({"error": f"Unknown OCR engine '{engine_name}'"}), 400
+
     image = request.files['file']
     tmp_path = os.path.join(DEBUG_DIR, image.filename)
     image.save(tmp_path)
-    app.logger.info(f"OCR gestartet für Datei: {image.filename}")
+    app.logger.info(f"OCR gestartet für Datei: {image.filename} mit Engine: {engine_name}")
 
-    thread = threading.Thread(target=process_ocr, args=(tmp_path, image.filename))
+    thread = threading.Thread(target=process_ocr, args=(tmp_path, image.filename, engine_name))
     thread.daemon = True
     thread.start()
 
-    return jsonify({"status": "processing", "file": image.filename})
+    return jsonify({"status": "processing", "file": image.filename, "engine": engine_name})
 
 
 def parse_receipt(lines):
@@ -249,4 +292,4 @@ def after_request(response):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-    
+
