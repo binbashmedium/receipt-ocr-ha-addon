@@ -12,7 +12,7 @@ RUN python -m pip install -U pip setuptools wheel
 RUN pip install paddleocr paddlepaddle \
     opencv-python-headless pillow pyyaml flask flask-cors \
     easyocr doctr[torch] torch torchvision torchaudio \
-    transformers keras-ocr
+    transformers keras-ocr python-doctr
     
 
 WORKDIR /app
