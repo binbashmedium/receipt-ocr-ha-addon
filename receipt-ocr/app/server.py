@@ -1,12 +1,11 @@
 from flask import Flask, request, jsonify
-from paddleocr import PaddleOCR
 import os, datetime, traceback, logging, json, re, threading
 from flask_cors import CORS
 from paddleocr import PaddleOCR
 import easyocr
 import doctr.models as doctr_models
-from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-import keras_ocr
+from doctr.io import DocumentFile
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
@@ -15,26 +14,17 @@ logging.basicConfig(level=logging.INFO)
 ocr_engines = {
     "paddle": None,
     "easyocr": None,
-    "doctr": None,
-    "trocr": None,
-    "kerasocr": None
+    "doctr": None
 }
 DEFAULT_ENGINE = "paddle"
 
 
 app.logger.info("Initialisiere PaddleOCR (de)...")
-
-ocr = PaddleOCR(
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=True,
-    lang='de')
-
 app.logger.info("PaddleOCR bereit.")
 
-RESULT_JSON = "/share/ocr/results.json"
-DEBUG_DIR = "/share/ocr/debug_outputs"
-MEDIA_PATH = "/media/ocr"
+RESULT_JSON = "results.json"
+DEBUG_DIR = "debug_outputs"
+MEDIA_PATH = "ocr"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 os.makedirs(MEDIA_PATH, exist_ok=True)
 
@@ -46,8 +36,6 @@ KNOWN_SUPERMARKETS = [
 ]
 
 def get_ocr_texts(engine_name, image_path):
-    from PIL import Image
-
     global ocr_engines
     engine_name = engine_name.lower()
     texts = []
@@ -78,29 +66,9 @@ def get_ocr_texts(engine_name, image_path):
                 reco_arch='crnn_vgg16_bn',
                 pretrained=True
             )
-        img = Image.open(image_path).convert("RGB")
-        result = ocr_engines["doctr"].predict(img)
+        single_img_doc = DocumentFile.from_images(image_path)
+        result = ocr_engines["doctr"](single_img_doc)
         return [word.value for block in result.pages[0].blocks for line in block.lines for word in line.words]
-
-    elif engine_name == "trocr":
-        if ocr_engines["trocr"] is None:
-            processor = TrOCRProcessor.from_pretrained("microsoft/trocr-base-handwritten")
-            model = VisionEncoderDecoderModel.from_pretrained("microsoft/trocr-base-handwritten")
-            ocr_engines["trocr"] = (processor, model)
-        processor, model = ocr_engines["trocr"]
-        from PIL import Image
-        image = Image.open(image_path).convert("RGB")
-        pixel_values = processor(images=image, return_tensors="pt").pixel_values
-        generated_ids = model.generate(pixel_values)
-        text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        return [text]
-
-    elif engine_name == "kerasocr":
-        if ocr_engines["kerasocr"] is None:
-            ocr_engines["kerasocr"] = keras_ocr.pipeline.Pipeline()
-        prediction_groups = ocr_engines["kerasocr"].recognize([image_path])
-        return [text for text, box in prediction_groups[0]]
-
     else:
         raise ValueError(f"Unbekannte OCR-Engine: {engine_name}")
 
@@ -251,7 +219,7 @@ def parse_receipt(lines):
 
     items = [it for it in items if not any(kw in it["name"].lower() for kw in skip_words)]
 
-    return {"store": store, "total": total, "items": items}
+    return {"store": store, "total": total, "items": items, "lines": lines}
 
 
 @app.route('/status', methods=['GET'])
