@@ -69,7 +69,92 @@ def get_ocr_texts(engine_name, image_path):
     else:
         raise ValueError(f"Unbekannte OCR-Engine: {engine_name}")
 
+def parse_receipt_new(lines):
+    lines = [t.strip() for t in lines if t.strip()]
+    app.logger.info(f"[DEBUG] parse_receipt(): {len(lines)} Zeilen")
 
+    # --- Marktname erkennen ---
+    store = ""
+    for i, t in enumerate(lines[:10]):
+        for market in KNOWN_SUPERMARKETS:
+            if market.lower() in t.lower():
+                store = market
+                break
+        if store:
+            break
+
+    # --- Regexe für Preise und Mengen ---
+    price_re = re.compile(r"(\d+[.,]\d{2})\s?(?:€|eur|b|a)?$", re.IGNORECASE)
+    qty_re = re.compile(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)?", re.IGNORECASE)
+
+    items = []
+    buffer_name = ""
+    last_price = None
+
+    # --- Zeilenbasiertes Parsing ---
+    for t in lines:
+        t_clean = t.replace("€", "").strip()
+        # Preis am Ende erkennen
+        m_price = price_re.search(t_clean)
+
+        if m_price:
+            price = float(m_price.group(1).replace(",", "."))
+            name_part = t_clean[:m_price.start()].strip(" .-")
+
+            # evtl. vorherige Zeilen (z. B. BANANE / BANDEROLE) kombinieren
+            if buffer_name:
+                name_part = (buffer_name + " " + name_part).strip()
+                buffer_name = ""
+
+            # Menge suchen (z. B. 1,064 kg)
+            qty_match = re.search(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)", name_part.lower())
+            qty = 1.0
+            if qty_match:
+                try:
+                    qty = float(qty_match.group(1).replace(",", "."))
+                except:
+                    pass
+                # Entferne Menge aus dem Namen
+                name_part = re.sub(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)", "", name_part, flags=re.IGNORECASE).strip()
+
+            if len(name_part) > 1:
+                items.append({"qty": qty, "name": name_part, "price": price})
+            last_price = price
+
+        else:
+            # Zeile ohne Preis: evtl. Produktfortsetzung
+            if any(x in t.lower() for x in ["summe", "gesamt", "visa", "mastercard"]):
+                continue
+            # Buffer aufbauen, bis Preis folgt
+            buffer_name = (buffer_name + " " + t).strip()
+
+    # --- Gesamtsumme suchen ---
+    total = None
+    for t in lines:
+        if any(x in t.lower() for x in ["summe", "gesamt", "total", "betrag"]):
+            m = price_re.search(t)
+            if m:
+                total = float(m.group(1).replace(",", "."))
+                break
+    if total is None:
+        # letzte Zahl als Fallback
+        for t in reversed(lines):
+            m = price_re.search(t)
+            if m:
+                total = float(m.group(1).replace(",", "."))
+                break
+
+    # --- Rausfiltern von offensichtlichen Nicht-Artikeln ---
+    skip_words = {"summe", "eur", "gesamt", "visa", "karte", "bon", "betrag", "wechselgeld"}
+    items = [it for it in items if not any(sw in it["name"].lower() for sw in skip_words)]
+
+    return {
+        "store": store,
+        "total": total,
+        "items": items,
+        "lines": lines
+    }
+    
 def process_ocr(image_path, image_name, engine_name):
     try:
         app.logger.info(f"OCR-Prozess gestartet für {image_name} mit Engine: {engine_name}")
@@ -81,7 +166,7 @@ def process_ocr(image_path, image_name, engine_name):
             f.write("\n".join(texts))
 
         # Parsing durchführen
-        parsed = parse_receipt(texts)
+        parsed = parse_receipt_new(texts)
         entry = {
             "timestamp": datetime.datetime.now().isoformat(timespec='seconds'),
             "file": image_name,
