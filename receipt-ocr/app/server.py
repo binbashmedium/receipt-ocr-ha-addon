@@ -8,7 +8,11 @@ from doctr.io import DocumentFile
 from PIL import Image
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+
+if not os.getenv("INGRESS_PORT"):
+    from flask_cors import CORS
+    CORS(app, resources={r"/*": {"origins": "*"}})
+    
 logging.basicConfig(level=logging.INFO)
 
 ocr_engines = {
@@ -299,5 +303,5 @@ def after_request(response):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-
+    port = int(os.getenv("INGRESS_PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
