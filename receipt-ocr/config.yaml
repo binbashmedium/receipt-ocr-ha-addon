@@ -16,4 +16,4 @@ panel_title: Receipt OCR
 map:
   - share:rw
   - media:rw
-webui: "http://[HOST]:[PORT:5000]"
+webui: "[PROTO:ingress]://[HOST]/api/hassio_ingress/[SLUG]/"
