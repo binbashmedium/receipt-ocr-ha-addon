@@ -13,7 +13,6 @@ ingress: true
 ingress_port: 0
 panel_icon: mdi:file-upload
 panel_title: Receipt OCR
-webui: "[PROTO:ingress]://[HOST]/api/hassio_ingress/[SLUG]/"
 map:
   - share:rw
   - media:rw
