@@ -303,5 +303,7 @@ def after_request(response):
 
 
 if __name__ == '__main__':
-    port = int(os.getenv("INGRESS_PORT", 5000))
+    ingress_port = os.getenv("INGRESS_PORT")
+    print(f"[DEBUG] INGRESS_PORT = {ingress_port}")
+    port = int(ingress_port or 5000)
     app.run(host="0.0.0.0", port=port)
