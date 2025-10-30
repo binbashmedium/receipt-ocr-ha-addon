@@ -186,7 +186,7 @@ def parse_receipt(lines):
 
     def clean_name(s):
         s = s.replace("  ", " ").strip(" .,-")
-        s = re.sub(r"^[AB]\b|\b[AB]$", "", s).strip()
+        s = re.sub(r"^[ABC]\b|\b[ABC]$", "", s).strip()
         return s
 
     # --- Hauptloop über Zeilen ---
