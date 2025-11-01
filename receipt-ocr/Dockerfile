@@ -13,7 +13,7 @@ RUN pip install paddleocr paddlepaddle \
     opencv-python-headless pillow pyyaml flask flask-cors \
     easyocr doctr[torch] torch torchvision torchaudio \
     transformers python-doctr tensorflow \
-    PyMySQL
+    PyMySQL paho-mqtt
 
 WORKDIR /app
 COPY app /app
