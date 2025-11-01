@@ -1,19 +1,19 @@
 FROM python:3.12-slim
 
-# System libraries for PaddleOCR + PyMuPDF build
+# System libraries for PaddleOCR + PyMuPDF + MariaDB client
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential make gcc g++ swig \
-    libgl1 libglib2.0-0 libjpeg-dev zlib1g-dev && \
+    libgl1 libglib2.0-0 libjpeg-dev zlib1g-dev \
+    default-mysql-client && \
     rm -rf /var/lib/apt/lists/*
 
 RUN python -m pip install -U pip setuptools wheel
 
-
 RUN pip install paddleocr paddlepaddle \
     opencv-python-headless pillow pyyaml flask flask-cors \
     easyocr doctr[torch] torch torchvision torchaudio \
-    transformers python-doctr tensorflow
-    
+    transformers python-doctr tensorflow \
+    PyMySQL
 
 WORKDIR /app
 COPY app /app
