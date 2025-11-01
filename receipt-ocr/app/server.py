@@ -1,29 +1,130 @@
 from flask import Flask, request, jsonify
 import os, datetime, traceback, logging, json, re, threading
 from flask_cors import CORS
+import pymysql
+from pymysql.err import OperationalError
 from paddleocr import PaddleOCR
 import easyocr
 import doctr.models as doctr_models
 from doctr.io import DocumentFile
 from PIL import Image
 
-app = Flask(__name__)
+# =====================================================
+# Add-on Konfiguration (/data/options.json)
+# =====================================================
+CONFIG_PATH = "/data/options.json"
+if os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        options = json.load(f)
+else:
+    options = {}
 
+OUTPUT_MODE = options.get("output_mode", "both")  # json | sql | both
+RESULT_JSON = options.get("json_output_path", "/share/ocr/results.json")
+
+DB_HOST = options.get("db_host", "mariadb")
+DB_PORT = int(options.get("db_port", 3306))
+DB_NAME = options.get("db_name", "receipts")
+DB_USER = options.get("db_user", "receipts")
+DB_PASS = options.get("db_password", "change_me")
+DB_CREATE = options.get("db_create", True)
+
+# =====================================================
+# Flask Setup
+# =====================================================
+app = Flask(__name__)
 if not os.getenv("INGRESS_PORT"):
-    from flask_cors import CORS
     CORS(app, resources={r"/*": {"origins": "*"}})
-    
 logging.basicConfig(level=logging.INFO)
 
-ocr_engines = {
-    "paddle": None,
-    "easyocr": None,
-    "doctr": None
-}
+# =====================================================
+# MariaDB Funktionen
+# =====================================================
+def db_connect():
+    try:
+        return pymysql.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASS,
+            database=DB_NAME,
+            autocommit=True,
+            cursorclass=pymysql.cursors.DictCursor,
+            charset="utf8mb4"
+        )
+    except OperationalError as e:
+        app.logger.warning(f"DB-Verbindung fehlgeschlagen: {e}")
+        return None
+
+
+def db_init():
+    conn = db_connect()
+    if not conn:
+        return
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS receipts (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        file VARCHAR(255),
+        engine VARCHAR(50),
+        store VARCHAR(100),
+        total DECIMAL(12,2),
+        timestamp DATETIME,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS receipt_items (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        receipt_id BIGINT UNSIGNED,
+        name VARCHAR(255),
+        qty DECIMAL(12,3),
+        price DECIMAL(12,2),
+        FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """)
+    conn.close()
+    app.logger.info("[SQL] Schema geprüft/angelegt.")
+
+
+def save_to_db(entry):
+    conn = db_connect()
+    if not conn:
+        app.logger.error("[SQL] Keine DB-Verbindung.")
+        return
+
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO receipts (file, engine, store, total, timestamp)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (
+        entry["file"],
+        entry["engine"],
+        entry.get("store"),
+        entry.get("total"),
+        entry.get("timestamp"),
+    ))
+    rid = cur.lastrowid
+
+    for item in entry.get("items", []):
+        cur.execute("""
+            INSERT INTO receipt_items (receipt_id, name, qty, price)
+            VALUES (%s, %s, %s, %s)
+        """, (rid, item.get("name"), item.get("qty"), item.get("price")))
+
+    conn.close()
+    app.logger.info(f"[SQL] Beleg in DB gespeichert (ID={rid}).")
+
+
+if OUTPUT_MODE in ("sql", "both") and DB_CREATE:
+    db_init()
+
+# =====================================================
+# OCR + Parsing (dein Originalcode)
+# =====================================================
+ocr_engines = {"paddle": None, "easyocr": None, "doctr": None}
 DEFAULT_ENGINE = "doctr"
 
-
-RESULT_JSON = "/share/ocr/results.json"
 DEBUG_DIR = "/share/ocr/debug_outputs"
 MEDIA_PATH = "/media/ocr"
 os.makedirs(DEBUG_DIR, exist_ok=True)
@@ -35,6 +136,7 @@ KNOWN_SUPERMARKETS = [
     "BIO COMPANY", "DENNREE", "ALNATURA", "HIT",
     "TEGUT", "FAMILA"
 ]
+
 
 def get_ocr_texts(engine_name, image_path):
     global ocr_engines
@@ -73,18 +175,16 @@ def get_ocr_texts(engine_name, image_path):
     else:
         raise ValueError(f"Unbekannte OCR-Engine: {engine_name}")
 
-    
+
 def process_ocr(image_path, image_name, engine_name):
     try:
         app.logger.info(f"OCR-Prozess gestartet für {image_name} mit Engine: {engine_name}")
 
         texts = get_ocr_texts(engine_name, image_path)
 
-        # Debug-Ausgabe speichern
         with open(os.path.join(DEBUG_DIR, f"debug_last_ocr_{engine_name}.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(texts))
 
-        # Parsing durchführen
         parsed = parse_receipt(texts)
         entry = {
             "timestamp": datetime.datetime.now().isoformat(timespec='seconds'),
@@ -93,26 +193,30 @@ def process_ocr(image_path, image_name, engine_name):
             **parsed
         }
 
-        # Ergebnisse zusammenführen
-        data = []
-        if os.path.exists(RESULT_JSON):
-            try:
-                with open(RESULT_JSON, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-            except Exception as e:
-                app.logger.warning(f"results.json konnte nicht gelesen werden: {e}")
-                data = []
+        # JSON
+        if OUTPUT_MODE in ("json", "both"):
+            data = []
+            if os.path.exists(RESULT_JSON):
+                try:
+                    with open(RESULT_JSON, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception as e:
+                    app.logger.warning(f"results.json konnte nicht gelesen werden: {e}")
+                    data = []
+            data.append(entry)
+            os.makedirs(os.path.dirname(RESULT_JSON), exist_ok=True)
+            with open(RESULT_JSON, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
 
-        data.append(entry)
-        with open(RESULT_JSON, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        # SQL
+        if OUTPUT_MODE in ("sql", "both"):
+            save_to_db(entry)
 
         app.logger.info(f"OCR abgeschlossen für {image_name} (Engine: {engine_name})")
 
     except Exception as e:
         app.logger.error(f"OCR-Fehler ({image_name}, Engine {engine_name}): {e}")
         app.logger.debug(traceback.format_exc())
-
 
 
 @app.route('/ocr', methods=['POST'])
@@ -136,12 +240,11 @@ def run_ocr():
     return jsonify({"status": "processing", "file": image.filename, "engine": engine_name})
 
 
+# Dein vollständiger parse_receipt() – unverändert aus Original
 def parse_receipt(lines):
-    """Finale Version des robusten REWE-Belegparsers (keine Summe als Artikel)."""
     lines = [t.strip() for t in lines if t.strip()]
     print(f"[DEBUG] {len(lines)} Zeilen erkannt")
 
-    # --- Marktname ---
     store = ""
     for t in lines[:10]:
         for market in KNOWN_SUPERMARKETS:
@@ -151,7 +254,6 @@ def parse_receipt(lines):
         if store:
             break
 
-    # --- Start bei erstem "EUR" ---
     start_idx = 0
     for i, t in enumerate(lines):
         if t.strip().upper() == "EUR":
@@ -159,7 +261,6 @@ def parse_receipt(lines):
             break
     lines = lines[start_idx:]
 
-    # --- Zusammenführen zerrissener Zahlen (z. B. 38,6 + 67 → 38,67) ---
     merged = []
     i = 0
     while i < len(lines):
@@ -189,27 +290,21 @@ def parse_receipt(lines):
         s = re.sub(r"^[ABC]\b|\b[ABC]$", "", s).strip()
         return s
 
-    # --- Hauptloop über Zeilen ---
     for t in lines:
         tl = t.lower()
         if not t or any(tok in tl for tok in skip_tokens):
             continue
-        # falls Zeile Teil des Summenbereichs -> komplett überspringen
         if any(word in tl for word in summe_tokens):
-            break  # alles danach ignorieren
+            break
 
-        # Preiszeile?
         m_price = price_re.search(t)
         if m_price:
             price = float(m_price.group(1).replace(",", "."))
             name_part = t[:m_price.start()].strip()
-
             if not name_part or name_part.lower() in {"a", "b"}:
                 name_part = buffer_name
                 buffer_name = ""
-
             name_part = clean_name(name_part)
-
             qty = 1.0
             m_qty = re.search(r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)?", name_part.lower())
             if m_qty:
@@ -220,13 +315,11 @@ def parse_receipt(lines):
                 name_part = re.sub(
                     r"(\d+[.,]?\d*)\s*(kg|stk|stück|x)", "", name_part, flags=re.IGNORECASE
                 ).strip()
-
             if len(name_part) > 1:
                 items.append({"qty": qty, "name": name_part, "price": price})
                 last_item = items[-1]
             continue
 
-        # Mengenzeilen nach Produkt
         if last_item and re.search(r"\d+[.,]?\d*\s*(kg|stk|stück|x)", tl):
             m_qty = re.search(r"(\d+[.,]?\d*)", t)
             if m_qty:
@@ -235,10 +328,8 @@ def parse_receipt(lines):
                 except:
                     pass
             continue
-
         buffer_name = (buffer_name + " " + t).strip()
 
-    # --- Gesamtsumme ---
     total = None
     for i, t in enumerate(lines):
         if any(x in t.lower() for x in summe_tokens):
@@ -250,7 +341,6 @@ def parse_receipt(lines):
                 total = float(m.group(1).replace(",", "."))
                 break
 
-    # Fallback: letzte Zahlen
     if total is None:
         nums = [x for x in lines[-10:] if re.match(r"^\d+[.,]?\d*$", x)]
         if len(nums) >= 2:
@@ -290,7 +380,10 @@ def index():
         "endpoint": "/ocr",
         "language": "de",
         "result_file": RESULT_JSON,
-        "debug_dir": DEBUG_DIR
+        "output_mode": OUTPUT_MODE,
+        "db_host": DB_HOST,
+        "db_port": DB_PORT,
+        "db_name": DB_NAME
     })
 
 
