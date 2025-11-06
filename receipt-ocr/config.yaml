@@ -1,5 +1,5 @@
 name: "Receipt OCR Add-on"
-version: "1.4.5"
+version: "2025.11.0"
 slug: "receipt_ocr_addon"
 description: "Lokaler OCR-Service mit REST- und MQTT-Schnittstelle (JSON/SQL-Ausgabe)"
 arch:
