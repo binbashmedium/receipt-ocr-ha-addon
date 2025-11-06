@@ -20,7 +20,7 @@ RUN python -m pip install -U pip setuptools wheel
 # ------------------------------------------------------
 RUN pip install \
     pillow pyyaml flask flask-cors \
-    doctr[torch] torch torchvision torchaudio tensorflow \
+    python-doctr torch torchvision torchaudio tensorflow \
     transformers \
     PyMySQL paho-mqtt
 
