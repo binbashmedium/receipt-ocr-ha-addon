@@ -3,8 +3,6 @@ import os, datetime, traceback, logging, json, re, threading, base64
 from flask_cors import CORS
 import pymysql
 from pymysql.err import OperationalError
-from paddleocr import PaddleOCR
-import easyocr
 import doctr.models as doctr_models
 from doctr.io import DocumentFile
 from PIL import Image
@@ -124,7 +122,7 @@ if OUTPUT_MODE in ("sql", "both") and DB_CREATE:
 # =====================================================
 # OCR Setup
 # =====================================================
-ocr_engines = {"paddle": None, "easyocr": None, "doctr": None}
+ocr_engine = None
 DEFAULT_ENGINE = "doctr"
 
 DEBUG_DIR = "/share/ocr/debug_outputs"
@@ -142,37 +140,20 @@ KNOWN_SUPERMARKETS = [
 # =====================================================
 # OCR Funktionen
 # =====================================================
-def get_ocr_texts(engine_name, image_path):
-    engine_name = engine_name.lower()
-    texts = []
-    if engine_name == "paddle":
-        if ocr_engines["paddle"] is None:
-            ocr_engines["paddle"] = PaddleOCR(use_doc_orientation_classify=False,
-                                              use_doc_unwarping=False,
-                                              use_textline_orientation=True,
-                                              lang='de')
-        result = ocr_engines["paddle"].predict(image_path)
-        for res in result:
-            if isinstance(res, dict) and "rec_texts" in res:
-                texts.extend([t.strip() for t in res["rec_texts"] if t.strip()])
-        return texts
-    elif engine_name == "easyocr":
-        if ocr_engines["easyocr"] is None:
-            ocr_engines["easyocr"] = easyocr.Reader(['de'])
-        result = ocr_engines["easyocr"].readtext(image_path)
-        return [r[1] for r in result]
-    elif engine_name == "doctr":
-        if ocr_engines["doctr"] is None:
-            ocr_engines["doctr"] = doctr_models.ocr_predictor(
-                det_arch='db_resnet50', reco_arch='crnn_vgg16_bn', pretrained=True)
-        single_img_doc = DocumentFile.from_images(image_path)
-        result = ocr_engines["doctr"](single_img_doc)
-        return [w.value for b in result.pages[0].blocks for l in b.lines for w in l.words]
-    else:
-        raise ValueError(f"Unbekannte OCR-Engine: {engine_name}")
+def get_ocr_texts(image_path):
+    global ocr_engine
+    if ocr_engine is None:
+        ocr_engine = doctr_models.ocr_predictor(
+            det_arch='db_resnet50',
+            reco_arch='crnn_vgg16_bn',
+            pretrained=True
+        )
+    single_img_doc = DocumentFile.from_images(image_path)
+    result = ocr_engine(single_img_doc)
+    return [w.value for b in result.pages[0].blocks for l in b.lines for w in l.words]
 
 # =====================================================
-# DEIN ORIGINALER PARSER — UNVERÄNDERT
+# Parser
 # =====================================================
 def parse_receipt(lines):
     """Finale Version des robusten REWE-Belegparsers (keine Summe als Artikel)."""
@@ -306,23 +287,22 @@ def parse_receipt(lines):
 # =====================================================
 # OCR Prozess + Speichern + MQTT Status
 # =====================================================
-def process_ocr(image_path, image_name, engine_name="doctr", mqtt_client=None):
+def process_ocr(image_path, image_name, mqtt_client=None):
     try:
-        app.logger.info(f"OCR-Prozess gestartet für {image_name} ({engine_name})")
+        app.logger.info(f"OCR-Prozess gestartet für {image_name} (Doctr)")
         if mqtt_client:
             mqtt_client.publish(f"{MQTT_TOPIC}/status", json.dumps({"file": image_name, "status": "processing"}))
 
-        texts = get_ocr_texts(engine_name, image_path)
+        texts = get_ocr_texts(image_path)
 
-        # Debug-Datei (optional wie zuvor)
-        with open(os.path.join(DEBUG_DIR, f"debug_last_ocr_{engine_name}.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(DEBUG_DIR, f"debug_last_ocr.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(texts))
 
         parsed = parse_receipt(texts)
         entry = {
             "timestamp": datetime.datetime.now().isoformat(timespec='seconds'),
             "file": image_name,
-            "engine": engine_name,
+            "engine": DEFAULT_ENGINE,
             **parsed
         }
 
@@ -378,7 +358,6 @@ def start_mqtt_listener():
             payload = json.loads(msg.payload.decode())
             filename = payload.get("filename", f"mqtt_{int(datetime.datetime.now().timestamp())}.jpg")
             data_b64 = payload.get("image_base64")
-            engine = payload.get("engine", DEFAULT_ENGINE)
             if not data_b64:
                 app.logger.warning("[MQTT] Kein 'image_base64' im Payload.")
                 return
@@ -388,7 +367,7 @@ def start_mqtt_listener():
                 f.write(image_bytes)
             threading.Thread(
                 target=process_ocr,
-                args=(image_path, filename, engine, c),
+                args=(image_path, filename, c),
                 daemon=True
             ).start()
         except Exception as e:
@@ -414,16 +393,15 @@ if MQTT_ENABLED:
 def run_ocr():
     if 'file' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
-    engine_name = request.args.get("engine", DEFAULT_ENGINE).lower()
     image = request.files['file']
     tmp_path = os.path.join(DEBUG_DIR, image.filename)
     image.save(tmp_path)
     threading.Thread(
         target=process_ocr,
-        args=(tmp_path, image.filename, engine_name, mqtt_client),
+        args=(tmp_path, image.filename, mqtt_client),
         daemon=True
     ).start()
-    return jsonify({"status": "processing", "file": image.filename, "engine": engine_name})
+    return jsonify({"status": "processing", "file": image.filename, "engine": DEFAULT_ENGINE})
 
 @app.route('/status', methods=['GET'])
 def get_status():
@@ -445,6 +423,7 @@ def index():
         "status": "ready",
         "endpoint": "/ocr",
         "language": "de",
+        "engine": DEFAULT_ENGINE,
         "result_file": RESULT_JSON,
         "output_mode": OUTPUT_MODE,
         "db_host": DB_HOST,
@@ -467,4 +446,3 @@ if __name__ == '__main__':
     ingress_port = os.getenv("INGRESS_PORT")
     port = int(ingress_port or options.get("port", 5000))
     app.run(host=options.get("host", "0.0.0.0"), port=port)
-    
