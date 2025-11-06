@@ -1,12 +1,11 @@
 FROM python:3.12-slim
 
 # ------------------------------------------------------
-# System Libraries – nur das, was Doctr + PyMuPDF + MariaDB braucht
+# System Libraries – nur das, was Doctr + MySQL braucht
 # ------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc g++ \
     libgl1 libglib2.0-0 libjpeg-dev zlib1g-dev \
-    
     default-mysql-client && \
     rm -rf /var/lib/apt/lists/*
 
@@ -16,12 +15,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m pip install -U pip setuptools wheel
 
 # ------------------------------------------------------
-# Python dependencies – nur das, was du wirklich brauchst
+# Install only what's really needed
 # ------------------------------------------------------
-RUN pip install \
-    pillow pyyaml flask flask-cors \
-    python-doctr torch torchvision torchaudio tensorflow \
-    transformers \
+RUN pip install --no-cache-dir \
+    flask flask-cors pillow pyyaml \
+    python-doctr[torch] \
     PyMySQL paho-mqtt
 
 # ------------------------------------------------------
